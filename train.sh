@@ -1,0 +1,11 @@
+python drivers/run_convdr_train.py \
+--output_dir=checkpoint/convdr-kd-cast19  \
+--model_name_or_path=checkpoint/ad-hoc-ance-msmarco  \
+--train_file=dataset/cast19/eval_topics.jsonl  \
+--query=no_res  \
+--per_gpu_train_batch_size=4  \
+--learning_rate=1e-5   \
+--log_dir=logs/convdr_kd_cast19 \
+--num_train_epochs=8  \
+--model_type=rdot_nll  \
+--cross_validate
