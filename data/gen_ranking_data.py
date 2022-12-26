@@ -5,6 +5,8 @@ import csv
 import os
 import pickle
 import random
+import sys
+sys.path.append('/home/tingchen_fu/ConvDR')
 from utils.util import load_collection
 
 # For CAsT cross-validation, I manually split the data into five folds to ensure the balance of judged queries in each fold.
@@ -492,10 +494,10 @@ qid_to_fold_test = {
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--train", type=str)
-    parser.add_argument("--run", type=str)
-    parser.add_argument("--qrels", type=str)
-    parser.add_argument("--output", type=str)
+    parser.add_argument("--train", type=str) # query file
+    parser.add_argument("--run", type=str) # ance retrieval trec result
+    parser.add_argument("--qrels", type=str) 
+    parser.add_argument("--output", type=str) # output path
     parser.add_argument("--collection", type=str)
     parser.add_argument(
         "--cast",

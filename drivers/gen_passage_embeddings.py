@@ -76,6 +76,8 @@ def InferenceEmbeddingFromStreamDataLoader(
     train_dataloader,
     is_query_inference=True,
 ):
+    # embedding passage and return their offsetid 
+
     # expect dataset from ReconstructTrainingSet
     results = {}
     eval_batch_size = args.per_gpu_eval_batch_size
@@ -97,7 +99,7 @@ def InferenceEmbeddingFromStreamDataLoader(
                       position=0,
                       leave=True):
 
-        idxs = batch[3].detach().numpy()  # [#B]
+        idxs = batch[3].detach().numpy()  # [#B] offset 0 base
 
         batch = tuple(t.to(args.device) for t in batch)
 
@@ -149,6 +151,7 @@ def StreamInferenceDoc(args,
     if args.local_rank != -1:
         dist.barrier()  # directory created
 
+    # embedding id is the offset of each passage
     _embedding, _embedding2id = InferenceEmbeddingFromStreamDataLoader(
         args,
         model,
@@ -187,15 +190,14 @@ def generate_new_ann(
     passage_collection_path = os.path.join(args.data_dir,
                                            "passages")
     passage_cache = EmbeddingCache(passage_collection_path)
-    with passage_cache as emb:
-        passage_embedding, passage_embedding2id = StreamInferenceDoc(
-            args,
-            model,
-            GetProcessingFn(args, query=False),
-            "passage_",
-            emb,
-            is_query_inference=False,
-            merge=merge)
+    passage_embedding, passage_embedding2id = StreamInferenceDoc(
+        args,
+        model,
+        GetProcessingFn(args, query=False),
+        "passage_",
+        passage_cache,
+        is_query_inference=False,
+        merge=merge)
     logger.info("***** Done passage inference *****")
 
 

@@ -9,7 +9,7 @@ import sys
 sys.path.append('/home/tingchen_fu/ConvDR')
 from utils.util import NUM_FOLD
 
-topic_range = range(81, 106)
+topic_range = range(81, 106) # the session number
 fold_dict = {x: (x - 81) // NUM_FOLD for x in topic_range}
 
 
@@ -124,6 +124,7 @@ if __name__ == "__main__":
     print("Processing CAsT utterances...")
 
     def get_text_by_raw_id(raw_id):
+        # map from raw id to document
         new_id = None
         if raw_id.startswith("MARCO_"):
             new_id = int(raw_id[6:])
@@ -163,6 +164,8 @@ if __name__ == "__main__":
             inputs.append(raw)
             target = manual_turn["manual_rewritten_utterance"]
 
+            # the major difference is the manual canonical result  and automatic canonical result, the goldem
+            # intermediate result of each turn
             manual_res_ids.append(manual_turn["manual_canonical_result_id"])
             response = get_text_by_raw_id(
                 manual_turn["manual_canonical_result_id"])

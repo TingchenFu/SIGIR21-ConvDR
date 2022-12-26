@@ -29,7 +29,7 @@ def preprocess(args):
 
     out_line_count = 0
 
-    print('start passage file split processing')
+    print('start passage file split processing') # write into 32 files
     multi_file_process(
         args,
         32,
@@ -37,6 +37,7 @@ def preprocess(args):
         out_passage_path,
         PassagePreprocessingFn)
 
+    
     print('start merging splits')
     with open(out_passage_path, 'wb') as f:
         for idx, record in enumerate(numbered_byte_file_generator(
@@ -56,7 +57,7 @@ def preprocess(args):
         'embedding_size': args.max_seq_length}
     with open(out_passage_path + "_meta", 'w') as f:
         json.dump(meta, f)
-    embedding_cache = EmbeddingCache(out_passage_path)
+    embedding_cache = EmbeddingCache(out_passage_path) # a file io to read byte passage
     print("First line")
     with embedding_cache as emb:
         print(emb[0])
@@ -77,6 +78,8 @@ def preprocess(args):
 
 
 def PassagePreprocessingFn(args, line, tokenizer):
+    # the line fn of collection.tsv
+    # encode pid; passage length; and tokenized text
     line = line.strip()
     ext = args.collection[args.collection.rfind("."):]
     passage = None
