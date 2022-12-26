@@ -1,3 +1,5 @@
+import sys
+sys.path.append('/home/tingchen_fu/ConvDR')
 import argparse
 import csv
 import logging
@@ -5,6 +7,7 @@ import json
 from model.models import MSMarcoConfigDict
 import os
 import pickle
+import pickle5
 import time
 import copy
 import faiss
@@ -20,14 +23,14 @@ logger = logging.getLogger(__name__)
 
 def EvalDevQuery(query_embedding2id,
                  merged_D,
-                 dev_query_positive_id,
-                 I_nearest_neighbor,
+                 dev_query_positive_id,  # qrel rank matrix
+                 I_nearest_neighbor, # merged I
                  topN,
-                 output_file,
-                 output_trec_file,
+                 output_dir,
                  offset2pid,
-                 raw_data_dir,
-                 output_query_type,
+                 eval_file,
+                 collection_file,
+                 query_type,
                  raw_sequences=None):
     prediction = {}
 
@@ -56,7 +59,8 @@ def EvalDevQuery(query_embedding2id,
         qids_to_raw_sequences[query_id] = inputs
 
         for idx, score in zip(selected_ann_idx, selected_ann_score):
-            pred_pid = offset2pid[idx]
+            #pred_pid = offset2pid[idx]
+            pred_pid=idx
 
             if not pred_pid in seen_pid:
                 qids_to_ranked_candidate_passages[query_id][rank] = (pred_pid,
@@ -69,27 +73,40 @@ def EvalDevQuery(query_embedding2id,
                 seen_pid.add(pred_pid)
 
     logger.info("Reading queries and passages...")
-    queries = {}
-    with open(
-            os.path.join(raw_data_dir,
-                         "queries." + output_query_type + ".tsv"), "r") as f:
-        for line in f:
-            qid, query = line.strip().split("\t")
-            queries[qid] = query
-    collection = os.path.join(raw_data_dir, "collection.jsonl")
-    if not os.path.exists(collection):
-        collection = os.path.join(raw_data_dir, "collection.tsv")
-        if not os.path.exists(collection):
-            raise FileNotFoundError(
-                "Neither collection.tsv nor collection.jsonl found in {}".
-                format(raw_data_dir))
-    all_passages = load_collection(collection)
+    qid2query={}
+    f=open(eval_file)
+    for line in f.readlines():
+        data=json.loads(line)
+        qid=str(data['topic_number'])+'_'+str(data['query_number'])
+        raw_query=data['input'][-1]
+        manual_query=data['target']
+        if query_type=='raw':
+            qid2query[qid]=raw_query
+        elif query_type=='manual':
+            qid2query[qid]=manual_query
+    
+    # queries = {}
+    # with open(
+    #         os.path.join(raw_data_dir,
+    #                      "queries." + output_query_type + ".tsv"), "r") as f:
+    #     for line in f:
+    #         qid, query = line.strip().split("\t")
+    #         queries[qid] = query
+    # collection = os.path.join(raw_data_dir, "collection.jsonl")
+    # if not os.path.exists(collection):
+    #     collection = os.path.join(raw_data_dir, "collection.tsv")
+    #     if not os.path.exists(collection):
+    #         raise FileNotFoundError(
+    #             "Neither collection.tsv nor collection.jsonl found in {}".
+    #             format(raw_data_dir))
+    
+    all_passages = load_collection(collection_file)
 
     # Write to file
-    with open(output_file, "w") as f, open(output_trec_file, "w") as g:
+    with open(os.path.join(output_dir,'output.jsonl'), "w") as f, open(os.path.join(output_dir,'output.trec'), "w") as g:
         for qid, passages in qids_to_ranked_candidate_passages.items():
             ori_qid = qid
-            query_text = queries[ori_qid]
+            query_text = qid2query[ori_qid]
             sequences = qids_to_raw_sequences[ori_qid]
             for i in range(topN):
                 pid, score = passages[i]
@@ -156,25 +173,22 @@ def evaluate(args, eval_dataset, model, logger):
 
 def search_one_by_one(ann_data_dir, gpu_index, query_embedding, topN):
     merged_candidate_matrix = None
-    for block_id in range(8):
-        logger.info("Loading passage reps " + str(block_id))
+    for block_id in range(5):
+        logger.info("Loading passage block " + str(block_id))
         passage_embedding = None
         passage_embedding2id = None
-        try:
-            with open(
-                    os.path.join(
-                        ann_data_dir,
-                        "passage__emb_p__data_obj_" + str(block_id) + ".pb"),
-                    'rb') as handle:
-                passage_embedding = pickle.load(handle)
-            with open(
-                    os.path.join(
-                        ann_data_dir,
-                        "passage__embid_p__data_obj_" + str(block_id) + ".pb"),
-                    'rb') as handle:
-                passage_embedding2id = pickle.load(handle)
-        except:
-            break
+        with open(
+                os.path.join(
+                    ann_data_dir,
+                    "doc_emb_block." + str(block_id) + ".pb"),
+                'rb') as handle:
+            passage_embedding = pickle5.load(handle)
+        with open(
+                os.path.join(
+                    ann_data_dir,
+                    "doc_embid_block." + str(block_id) + ".pb"),
+                'rb') as handle:
+            passage_embedding2id = pickle5.load(handle)
         print('passage embedding shape: ' + str(passage_embedding.shape))
         print("query embedding shape: " + str(query_embedding.shape))
         gpu_index.add(passage_embedding)
@@ -244,10 +258,42 @@ def search_one_by_one(ann_data_dir, gpu_index, query_embedding, topN):
 
 def main():
     parser = argparse.ArgumentParser()
+    # model related
     parser.add_argument("--model_path", type=str, help="The model checkpoint.")
+    parser.add_argument(
+        "--model_type",
+        default=None,
+        type=str,
+        required=True,
+        help="Model type selected in the list: " +
+        ", ".join(MSMarcoConfigDict.keys()),
+    )
+
+    # input related
     parser.add_argument("--eval_file",
                         type=str,
-                        help="The evaluation dataset.")
+                        help="The evaluation query dataset.")
+    parser.add_argument("--collection_file",type=str,help="raw passage")
+    parser.add_argument("--qrel_file", 
+                        type=str, 
+                        help="The qrels file.")
+    parser.add_argument("--ann_data_dir",
+                        type=str,
+                        help="Path to ANCE embeddings.")
+    parser.add_argument("--offset2pid_file",type=str,help='path to offset2pid.pickle')
+
+    #output related
+    parser.add_argument("--dump_dir",
+                    type=str,
+                    help="Output file for OpenMatch reranking.")
+    parser.add_argument(
+        "--exp_name",
+        type=str,
+        help="TREC-style run file, to be evaluated by the trec_eval tool.")
+
+
+
+    # experiment parameter
     parser.add_argument(
         "--max_concat_length",
         default=256,
@@ -258,73 +304,61 @@ def main():
                         type=int,
                         help="Max input query length after tokenization."
                         "This option is for single query input.")
-    parser.add_argument("--cross_validate",
+    parser.add_argument("--query_type",type=str,choices=['raw','manual','no_res','output',"man_can", "auto_can",])
+    parser.add_argument("--cross_validation",
                         action='store_true',
                         help="Set when doing cross validation.")
     parser.add_argument("--per_gpu_eval_batch_size",
                         default=4,
                         type=int,
                         help="Batch size per GPU/CPU.")
-    parser.add_argument("--no_cuda",
-                        action='store_true',
-                        help="Avoid using CUDA when available (for pytorch).")
     parser.add_argument('--seed',
                         type=int,
                         default=42,
                         help="Random seed for initialization.")
-    parser.add_argument("--cache_dir", type=str)
-    parser.add_argument("--ann_data_dir",
-                        type=str,
-                        help="Path to ANCE embeddings.")
+    # parser.add_argument("--cache_dir", type=str)
     parser.add_argument("--use_gpu",
                         action='store_true',
                         help="Whether to use GPU for Faiss.")
-    parser.add_argument("--qrels", type=str, help="The qrels file.")
-    parser.add_argument("--processed_data_dir",
-                        type=str,
-                        help="Path to tokenized documents.")
-    parser.add_argument("--raw_data_dir", type=str, help="Path to dataset.")
-    parser.add_argument("--output_file",
-                        type=str,
-                        help="Output file for OpenMatch reranking.")
-    parser.add_argument(
-        "--output_trec_file",
-        type=str,
-        help="TREC-style run file, to be evaluated by the trec_eval tool.")
-    parser.add_argument(
-        "--query",
-        type=str,
-        default="no_res",
-        choices=["no_res", "man_can", "auto_can", "target", "output", "raw"],
-        help="Input query format.")
-    parser.add_argument("--output_query_type",
-                        type=str,
-                        help="Query to be written in the OpenMatch file.")
+
     parser.add_argument(
         "--fold",
         type=int,
         default=-1,
         help="Fold to evaluate on; set to -1 to evaluate all folds.")
-    parser.add_argument(
-        "--model_type",
-        default=None,
-        type=str,
-        required=True,
-        help="Model type selected in the list: " +
-        ", ".join(MSMarcoConfigDict.keys()),
-    )
     parser.add_argument("--top_n",
                         default=100,
                         type=int,
                         help="Number of retrieved documents for each query.")
+    
+    # parser.add_argument("--processed_data_dir",
+    #                     type=str,
+    #                     help="Path to tokenized documents.")
+    # parser.add_argument("--raw_data_dir", type=str, help="Path to dataset.")
+    # parser.add_argument(
+    #     "--query",
+    #     type=str,
+    #     default="no_res",
+    #     choices=["no_res", "man_can", "auto_can", "target", "output", "raw"],
+    #     help="Input query format.")
+    # parser.add_argument("--output_query_type",
+    #                     type=str,
+    #                     help="Query to be written in the OpenMatch file.")
+
     args = parser.parse_args()
 
     device = torch.device(
-        "cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
+        "cuda" if torch.cuda.is_available() and args.use_gpu else "cpu")
     args.n_gpu = 1
     args.device = device
+    args.output_dir=os.path.join(args.dump_dir,args.exp_name)
+    if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
+        raise NotImplementedError 
+    
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
 
-    ngpu = faiss.get_num_gpus()
+    ngpu = 1#faiss.get_num_gpus()
     gpu_resources = []
     tempmem = -1
 
@@ -344,7 +378,7 @@ def main():
     # Set seed
     set_seed(args)
 
-    with open(os.path.join(args.processed_data_dir, "offset2pid.pickle"),
+    with open(os.path.join(args.offset2pid_file),
               "rb") as f:
         offset2pid = pickle.load(f)
 
@@ -370,8 +404,8 @@ def main():
         index = cpu_index
 
     dev_query_positive_id = {}
-    if args.qrels is not None:
-        with open(args.qrels, 'r', encoding='utf8') as f:
+    if args.qrel_file is not None:
+        with open(args.qrel_file, 'r', encoding='utf8') as f:
             tsvreader = csv.reader(f, delimiter="\t")
             for [topicid, _, docid, rel] in tsvreader:
                 topicid = str(topicid)
@@ -388,7 +422,7 @@ def main():
     total_embedding2id = []
     total_raw_sequences = []
 
-    if not args.cross_validate:
+    if not args.cross_validation:
 
         config, tokenizer, model = load_model(args, args.model_path)
 
@@ -403,6 +437,7 @@ def main():
                                          tokenizer,
                                          args,
                                          mode="inference")
+        # get query embedding, embedding id is the query id (turn id)
         total_embedding, total_embedding2id, raw_sequences = evaluate(
             args, eval_dataset, model, logger)
         total_raw_sequences.extend(raw_sequences)
@@ -411,7 +446,8 @@ def main():
 
     else:
         # K-Fold Cross Validation
-
+        print("current model_path")
+        print(args.model_path)
         for i in range(NUM_FOLD):
             if args.fold != -1 and i != args.fold:
                 continue
@@ -447,16 +483,17 @@ def main():
     merged_D, merged_I = search_one_by_one(args.ann_data_dir, index,
                                            total_embedding, args.top_n)
     logger.info("start EvalDevQuery...")
+    
     EvalDevQuery(total_embedding2id,
                  merged_D,
                  dev_query_positive_id=dev_query_positive_id,
                  I_nearest_neighbor=merged_I,
                  topN=args.top_n,
-                 output_file=args.output_file,
-                 output_trec_file=args.output_trec_file,
+                 output_dir=args.output_dir,
                  offset2pid=offset2pid,
-                 raw_data_dir=args.raw_data_dir,
-                 output_query_type=args.output_query_type,
+                 eval_file=args.eval_file,
+                 collection_file=args.collection_file,
+                 query_type=args.query_type,
                  raw_sequences=total_raw_sequences)
 
 
