@@ -144,6 +144,7 @@ def barrier_array_merge(args,
 
 
 def pad_input_ids(input_ids, max_length, pad_on_left=False, pad_token=0):
+    # pad input id to max length
     padding_length = max_length - len(input_ids)
     padding_id = [pad_token] * padding_length
 
@@ -243,26 +244,25 @@ def load_model(args, checkpoint_path):
     num_labels = len(label_list)
     args.model_type = args.model_type.lower()
     configObj = MSMarcoConfigDict[args.model_type]
-    args.model_path = checkpoint_path
 
     config, tokenizer, model = None, None, None
     if args.model_type != "dpr":
         config = configObj.config_class.from_pretrained(
-            args.model_path,
+            checkpoint_path,
             num_labels=num_labels,
             finetuning_task="MSMarco",
-            cache_dir=args.cache_dir if args.cache_dir else None,
+            cache_dir= None,
         )
         tokenizer = configObj.tokenizer_class.from_pretrained(
-            args.model_path,
+            checkpoint_path,
             do_lower_case=True,
-            cache_dir=args.cache_dir if args.cache_dir else None,
+            cache_dir= None,
         )
         model = configObj.model_class.from_pretrained(
-            args.model_path,
-            from_tf=bool(".ckpt" in args.model_path),
+            checkpoint_path,
+            from_tf=bool(".ckpt" in checkpoint_path),
             config=config,
-            cache_dir=args.cache_dir if args.cache_dir else None,
+            cache_dir=None,
         )
     else:  # dpr
         model = configObj.model_class(args)
@@ -360,7 +360,7 @@ class EmbeddingCache:
             self.dtype = np.dtype(meta['type'])
             self.total_number = meta['total_number']
             self.record_size = int(
-                meta['embedding_size']) * self.dtype.itemsize + 4
+                meta['embedding_size']) * self.dtype.itemsize + 4  # max_seq_length *4 + passage_length
         if seed >= 0:
             self.ix_array = np.random.RandomState(seed).permutation(
                 self.total_number)
@@ -374,7 +374,7 @@ class EmbeddingCache:
     def close(self):
         self.f.close()
 
-    def read_single_record(self):
+    def read_single_record(self): # read a single record from current pointer
         record_bytes = self.f.read(self.record_size)
         passage_len = int.from_bytes(record_bytes[:4], 'big')
         passage = np.frombuffer(record_bytes[4:], dtype=self.dtype)
@@ -461,9 +461,9 @@ class ConvSearchDataset(Dataset):
                     auto_sent = record.get('output', "no")
                     raw_sent = record["input"][-1]
                     responses = record[
-                        "manual_response"] if args.query == "man_can" else (
+                        "manual_response"] if args.query_type == "man_can" else (
                             record["automatic_response"]
-                            if args.query == "auto_can" else [])
+                            if args.query_type == "auto_can" else [])
                     topic_number = record.get('topic_number', None)
                     query_number = record.get('query_number', None)
                     qid = str(topic_number) + "_" + str(
@@ -480,9 +480,7 @@ class ConvSearchDataset(Dataset):
                         doc_pos = record["doc_pos"]
                         doc_negs = record["doc_negs"]
 
-                    if mode == "train" or args.query in [
-                            "no_res", "man_can", "auto_can"
-                    ]:
+                    if mode == "train" or args.query_type in ["no_res", "man_can", "auto_can"]:
                         if args.model_type == "dpr":
                             concat_ids.append(
                                 tokenizer.cls_token_id
@@ -497,7 +495,7 @@ class ConvSearchDataset(Dataset):
                                     tokenizer.tokenize(sent)))
                             concat_ids.append(tokenizer.sep_token_id)
 
-                        if args.query in [
+                        if args.query_type in [
                                 "man_can", "auto_can"
                         ] and len(responses) >= 2:  # add response
                             if args.model_type != "dpr":
@@ -523,7 +521,7 @@ class ConvSearchDataset(Dataset):
                             concat_ids, args.max_concat_length)
                         assert len(concat_ids) == args.max_concat_length
 
-                    elif args.query == "target":  # manual
+                    elif args.query_type == "manual":  # manual
 
                         concat_ids = tokenizer.encode(
                             target_sent,
@@ -533,7 +531,7 @@ class ConvSearchDataset(Dataset):
                             concat_ids, args.max_query_length)
                         assert len(concat_ids) == args.max_query_length
 
-                    elif args.query == "output":  # reserved for query rewriter output
+                    elif args.query_type == "output":  # reserved for query rewriter output
 
                         concat_ids = tokenizer.encode(
                             auto_sent,
@@ -543,7 +541,7 @@ class ConvSearchDataset(Dataset):
                             concat_ids, args.max_query_length)
                         assert len(concat_ids) == args.max_query_length
 
-                    elif args.query == "raw":
+                    elif args.query_type == "raw":
 
                         concat_ids = tokenizer.encode(
                             raw_sent,
@@ -618,14 +616,14 @@ class ConvSearchDataset(Dataset):
 
 
 def tokenize_to_file(args, i, num_process, in_path, out_path, line_fn):
-
-    configObj = MSMarcoConfigDict[args.model_type]
-    tokenizer = configObj.tokenizer_class.from_pretrained(
+    ## process each line with a function
+    configObj = MSMarcoConfigDict[args.model_type] # rdot_nll
+    tokenizer = configObj.tokenizer_class.from_pretrained(  # RobertaTokenizer
         args.model_name_or_path,
         do_lower_case=True,
         cache_dir=None,
     )
-
+    # collection.tsv and dataset/cast_shared/tokenized/passages
     with open(in_path, 'r', encoding='utf-8') if in_path[-2:] != "gz" else gzip.open(in_path, 'rt', encoding='utf8') as in_f,\
             open('{}_split{}'.format(out_path, i), 'wb') as out_f:
         for idx, line in enumerate(in_f):
@@ -641,6 +639,8 @@ def tokenize_to_file(args, i, num_process, in_path, out_path, line_fn):
 
 #                      args, 32,        , collection.tsv, passages,
 def multi_file_process(args, num_process, in_path, out_path, line_fn):
+    # cut the collection.tsv into 32 pieces, each process a piece and process each line with line_fn.
+    # write the result into dataset/cast_shared/tokenized/passages
     processes = []
     for i in range(num_process):
         p = Process(target=tokenize_to_file,
