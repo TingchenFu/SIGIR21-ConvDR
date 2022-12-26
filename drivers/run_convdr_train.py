@@ -426,11 +426,19 @@ def main():
         type=str,
         help="The teacher model. If None, use `model_name_or_path` as teacher."
     )
+    # parser.add_argument(
+    #     "--query",
+    #     type=str,
+    #     default="no_res",
+    #     choices=["no_res", "man_can", "auto_can", "target", "output", "raw"],
+    #     help="Input query format."
+    # )
+    # change a name and target -> manual
     parser.add_argument(
-        "--query",
+        "--query_type",
         type=str,
         default="no_res",
-        choices=["no_res", "man_can", "auto_can", "target", "output", "raw"],
+        choices=["no_res", "man_can", "auto_can", "manual", "output", "raw"],
         help="Input query format."
     )
     args = parser.parse_args()
@@ -470,7 +478,7 @@ def main():
     if not args.cross_validate:
 
         config, tokenizer, model = load_model(args, args.model_name_or_path)
-        if args.query in ["man_can", "auto_can"]:
+        if args.query_type in ["man_can", "auto_can"]:
             tokenizer.add_tokens(["<response>"])
             model.resize_token_embeddings(len(tokenizer))
         if args.max_concat_length <= 0:
@@ -517,7 +525,7 @@ def main():
             suffix = ('-' + str(i)) if args.init_from_multiple_models else ''
             config, tokenizer, model = load_model(
                 args, args.model_name_or_path + suffix)
-            if args.query in ["man_can", "auto_can"]:
+            if args.query_type in ["man_can", "auto_can"]:
                 tokenizer.add_tokens(["<response>"])
                 model.resize_token_embeddings(len(tokenizer))
 
